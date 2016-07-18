@@ -64,7 +64,8 @@ class FeedQueue:
 
     def _get_pika_channel_connection(self):
         """ Connect to pika server and return channel and connection"""
-        parameters = pika.ConnectionParameters(host=self.host, port=self.port)
+        parameters = pika.ConnectionParameters(host=self.host, port=self.port,
+                                               heartbeat_interval=0,)
         connection = pika.BlockingConnection(parameters)
         channel = connection.channel()
         channel.exchange_declare(exchange=self.exchange)

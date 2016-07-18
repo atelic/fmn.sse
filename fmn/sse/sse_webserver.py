@@ -1,6 +1,6 @@
 import json
 import logging
-
+import time
 import fedmsg
 from twisted.internet import reactor, task
 from twisted.web import server, resource
@@ -24,10 +24,29 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
+def pika_consumption_call_back(channel, method, properties, body, key, self):
+    time.sleep(1)
+    # check if any requests are present
+    if self.check_if_connections_exist_for_queue(key=key):
+        if body:
+            self.push_messages_to_all_connections(key=key, payload=body)
+        else:
+            log.debug('pika call back returned no body')
+    else:
+        # stop the call back since no requests are present
+        log.debug('stopping pika consumption')
+        self.stop_pika_consumption(key=key)
+
+
+def basic_consume_pika(channel, method, properties, body):
+    log.debug(body)
+
+
 class SSEServer(resource.Resource):
     connections = {}
     isLeaf = True
     looping_calls = {}
+    call_back = {}
 
     def render_GET(self, request):
 
@@ -104,13 +123,58 @@ class SSEServer(resource.Resource):
             return None
 
     def pika_consumption_call_back(self, channel, method, properties, body, key):
-        if body:
+        time.sleep(1)
+        # check if any requests are present
+        if self.check_if_connections_exist_for_queue():
+            if body:
+                self.push_messages_to_all_connections(key=key, payload=body)
+            else:
+                log.debug('pika call back returned no body')
+        else:
+            # stop the call back since no requests are present
+            log.debug('stopping pika consumption')
+            self.stop_pika_consumption(key=key)
 
+    def start_pika_consumption(self, key, fq):
+        if key[0] in self.call_back:
+            if key[1] in self.call_back[key[0]]:
+                self.call_back[key[0]][key[1]] = fq
+            else:
+                self.call_back[key[0]][key[1]] = fq
+        else:
+            self.call_back[key[0]] = {}
+            self.call_back[key[0]][key[1]] = fq
 
-    def start_pika_consumption(self, fq):
+        fq.channel.basic_qos(prefetch_count=1)
 
+        fq.channel.basic_consume(
+          lambda ch, method, properties,
+                 body: pika_consumption_call_back(ch, method, properties, body,
+                                                  key, self),
+          queue=key[1],
+          no_ack=True)
+        '''
+        fq.channel.basic_consume(consumer_callback=basic_consume_pika,
+                                 queue=key[1], no_ack=True)
+                                 '''
+        try:
+            fq.channel.start_consuming()
+        except KeyboardInterrupt:
+            fq.channel.stop_consuming()
+        fq.connection.close()
 
+    def stop_pika_consumption(self, key):
+        if key[0] in self.call_back:
+            if key[1] in self.call_back[key[0]]:
+                self.call_back[key[0]][key[1]].channel.stop_consuming()
+                del self.call_back[key[0]][key[1]]
 
+    def does_pika_consumption_exist(self, key):
+        if key[0] in self.call_back:
+            if key[1] in self.call_back[key[0]]:
+                return True
+
+        return False
 
     def push_sse(self, msg, conn):
         event_line = "data: {}\r\n".format(msg)
@@ -122,6 +186,9 @@ class SSEServer(resource.Resource):
         :return: None
         '''
         payload = self.get_payload(key=key)
+        self.push_messages_to_all_connections(key=key, payload=payload)
+
+    def push_messages_to_all_connections(self, key, payload=''):
         if payload:
             logger.info(payload)
             for req in self.connections[key[0]][key[1]]:
@@ -145,6 +212,15 @@ class SSEServer(resource.Resource):
         logger.info('Succesfully added a connection ' + str(con))
         #if not self.does_loopingcall_exist(key=key):
         #    self.add_looping_call(key)
+        if not self.does_pika_consumption_exist(key=key):
+            host = Config.get('fmn.sse.pika.host', 'localhost')
+            exchange = key[0]  # Config.get('pika', 'exchange')
+            queue_name = key[1]
+            expire_ms = int(Config.get('fmn.sse.pika.msg_expiration', 3600))
+            port = int(Config.get('fmn.sse.pika.port', 5672))
+            fq = FeedQueue(host=host, exchange=exchange, expire_ms=expire_ms,
+                           queue_name=queue_name, port=port)
+            self.start_pika_consumption(key=key, fq=fq)
 
     def check_if_connections_exist_for_queue(self, key):
         '''
@@ -177,7 +253,6 @@ class SSEServer(resource.Resource):
         '''
         if not key[0] in self.looping_calls:
             self.looping_calls[key[0]] = {}
-
         self.looping_calls[key[0]][key[1]] = task.LoopingCall(
             self.write_messages_all_connections, key)
         self.start_looping_call(key=key)
@@ -207,8 +282,10 @@ class SSEServer(resource.Resource):
         '''
         con.finish
         self.connections[key[0]][key[1]].remove(con)
+
         if not self.check_if_connections_exist_for_queue(key):
-            self.stop_looping_call(key)
+            # self.stop_looping_call(key)
+            self.stop_pika_consumption(key=key)
 
 
 if __name__ == "__main__":
