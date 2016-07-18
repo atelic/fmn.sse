@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 import time
 import fedmsg
 from twisted.internet import reactor, task
@@ -153,10 +154,14 @@ class SSEServer(resource.Resource):
                                                   key, self),
           queue=key[1],
           no_ack=True)
-        '''
+        t = threading.Thread(target=self.helper_pika_consumer, args=(fq, key))
+        t.start()
+
+
+    def helper_pika_consumer(self, fq, key):
         fq.channel.basic_consume(consumer_callback=basic_consume_pika,
                                  queue=key[1], no_ack=True)
-                                 '''
+
         try:
             fq.channel.start_consuming()
         except KeyboardInterrupt:
@@ -178,7 +183,8 @@ class SSEServer(resource.Resource):
 
     def push_sse(self, msg, conn):
         event_line = "data: {}\r\n".format(msg)
-        conn.write(event_line + '\r\n')
+        event_line += '\r\n'
+        conn.write(event_line)
 
     def write_messages_all_connections(self, key):
         '''

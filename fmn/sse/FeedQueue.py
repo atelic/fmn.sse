@@ -22,7 +22,6 @@ class FeedQueue:
 
     def consume_one_message(self, callback):
         self.channel.basic_consume(callback, queue=self.queue_name, no_ack=False)
-        self.channel.basic_qos(prefetch_count=1)
         self.channel.start_consuming()
 
     def stop_consumption(self):
@@ -68,6 +67,7 @@ class FeedQueue:
                                                heartbeat_interval=0,)
         connection = pika.BlockingConnection(parameters)
         channel = connection.channel()
+        channel.basic_qos(prefetch_count=1)
         channel.exchange_declare(exchange=self.exchange)
         channel.queue_declare(queue=self.queue_name, durable=True,
                               arguments={'x-message-ttl': self.expire_ms, })
