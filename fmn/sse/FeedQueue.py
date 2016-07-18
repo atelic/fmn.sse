@@ -20,6 +20,15 @@ class FeedQueue:
         if self.connection.is_closed:
             self.channel, self.connection = self._get_pika_channel_connection()
 
+    def consume_one_message(self, callback):
+        self.channel.basic_consume(callback, queue=self.queue_name, no_ack=False)
+        self.channel.basic_qos(prefetch_count=1)
+        self.channel.start_consuming()
+
+    def stop_consumption(self):
+        if len(self.channel.consumer_tags) > 0:  # there are consumers
+            self.channel.stop_consuming()
+
     def receive_one_message(self):
         # modified but src is below
         # src: http://stackoverflow.com/questions/9876227/rabbitmq-consume-one-message-if-exists-and-quit

@@ -93,7 +93,7 @@ class SSEServer(resource.Resource):
         exchange = key[0]  # Config.get('pika', 'exchange')
         queue_name = key[1]
         expire_ms = int(Config.get('fmn.sse.pika.msg_expiration', 3600))
-        port = int(Config.get('fmn.sse.pika.port', None))
+        port = int(Config.get('fmn.sse.pika.port', 5672))
 
         fq = FeedQueue(host=host, exchange=exchange, expire_ms=expire_ms,
                        queue_name=queue_name, port=port)
@@ -102,6 +102,15 @@ class SSEServer(resource.Resource):
             return str(data)
         else:
             return None
+
+    def pika_consumption_call_back(self, channel, method, properties, body, key):
+        if body:
+
+
+    def start_pika_consumption(self, fq):
+
+
+
 
     def push_sse(self, msg, conn):
         event_line = "data: {}\r\n".format(msg)
@@ -134,8 +143,8 @@ class SSEServer(resource.Resource):
             self.connections[key[0]] = {}
             self.connections[key[0]][key[1]] = [con]
         logger.info('Succesfully added a connection ' + str(con))
-        if not self.does_loopingcall_exist(key=key):
-            self.add_looping_call(key)
+        #if not self.does_loopingcall_exist(key=key):
+        #    self.add_looping_call(key)
 
     def check_if_connections_exist_for_queue(self, key):
         '''
@@ -206,3 +215,13 @@ if __name__ == "__main__":
     site = server.Site(SSEServer())
     reactor.listenTCP(int(Config.get('fmn.sse.webserver.tcp_port', 8080)), site)
     reactor.run()
+else:
+    from twisted.internet import protocol
+    from twisted.application import service, internet
+
+    factory = protocol.ServerFactory()
+    factory.protocol = SSEServer
+    factory.clients = []
+
+    application = service.Application("sseserver")
+    internet.TCPServer(8080, factory).setServiceParent(application)
